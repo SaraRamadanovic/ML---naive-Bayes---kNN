@@ -1,0 +1,281 @@
+---
+title: "MU-zadaca2-Naive_Bayes"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#ucitavanje seta podataka
+```{r}
+
+podaci <- read.csv("dataset.csv",
+                    fileEncoding = 'UTF-8',
+                    strip.white = TRUE,
+                    header = TRUE,
+                    sep = ',')
+
+```
+
+
+```{r}
+
+podaci$RainToday[podaci$RainToday == "Yes"] <- 1
+podaci$RainToday[podaci$RainToday == "No"] <- 0
+podaci$RainToday <- as.numeric(podaci$RainToday)
+
+podaci$WindGustDir <- factor(sort(podaci$WindGustDir))
+podaci$WindGustDir <- sapply(podaci$WindGustDir, unclass)
+
+podaci$WindDir9am <- factor(sort(podaci$WindDir9am))
+podaci$WindDir9am <- sapply(podaci$WindDir9am, unclass)
+
+podaci$WindDir3pm <- factor(sort(podaci$WindDir3pm))
+podaci$WindDir3pm <- sapply(podaci$WindDir3pm, unclass)
+
+podaci$RainTomorrow <- factor(podaci$RainTomorrow)
+rows <- sample(nrow(podaci))
+podaci <- podaci[rows, ]
+
+end <- length(podaci$RainTomorrow)
+n <- as.integer(0.8 * end)
+podaci_train <- podaci[1 : n, ]
+podaci_test <- podaci[(n + 1) : end, ]
+
+```
+
+
+#Bayes
+```{r}
+#Naive Bayes
+library(naivebayes)
+library(caret)
+library(pROC)
+
+model_bayes <- naive_bayes(RainTomorrow~Location+MinTemp+MaxTemp+Rainfall+WindGustDir+WindGustSpeed+RainToday+Humidity9am+Cloud9am+Pressure9am+WindDir9am+WindDir3pm, data=podaci_train, na.action="na.omit")
+
+
+model_bayes
+pred_bayes <- predict(model_bayes, newdata = podaci_test, type="class")
+confusionMatrix(pred_bayes, podaci_test$RainTomorrow)
+
+```
+
+#Confusion matrix
+
+```{r}
+
+cm <- confusionMatrix(pred_bayes, podaci_test$RainTomorrow)
+draw_confusion_matrix(cm)
+
+```
+
+#Bayes with laplace smooting
+```{r}
+model_bayes_lap <- naive_bayes(RainTomorrow~Location+MinTemp+MaxTemp+Rainfall+WindGustDir+WindGustSpeed+
+                             RainToday+Humidity9am+Cloud9am+Pressure9am+WindDir9am+WindDir3pm, data=podaci_train,laplace=1, na.action="na.omit")
+
+
+model_bayes_lap
+pred_bayes_lap <- predict(model_bayes_lap, newdata = podaci_test, type="class")
+cm <- confusionMatrix(pred_bayes_lap, podaci_test$RainTomorrow)
+draw_confusion_matrix(cm)
+
+```
+
+#ROC
+```{r}
+
+pred_bayes_num <- as.numeric(pred_bayes)
+podaci_test_num <- as.numeric(podaci_test$RainTomorrow)
+lrROC <- roc(pred_bayes_num ~ podaci_test_num,smoothed = TRUE,
+             # arguments for ci
+             ci=TRUE, boot.n=100, ci.alpha=0.9, stratified=FALSE,
+             # arguments for plot
+             plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+             print.auc=TRUE, show.thres=TRUE)
+
+sens.ci <- ci.se(lrROC)
+plot(sens.ci, type="shape", col="lightblue")
+
+```
+
+
+```{r}
+
+library(plyr)
+
+kfold <- function(podaci, k)
+{
+  folds <- split(podaci, cut(sample(1 : nrow(podaci)), k))
+  acc <- rep(NA, length(folds))
+  kappa <- rep(NA, length(folds))
+  
+  for (i in 1:length(folds))
+  {
+    test <- subset(ldply(folds[i], data.frame), select = -c(.id))
+    train <- subset(ldply(folds[-i], data.frame), select = -c(.id))
+    
+    
+    model <- naive_bayes(RainTomorrow~Location+MinTemp+MaxTemp+Rainfall+WindGustDir+WindGustSpeed+                         RainToday+Humidity9am+Cloud9am+Pressure9am+WindDir9am+WindDir3pm, data=podaci_train, laplace=1, na.action="na.omit")
+    
+    predictions <- predict(model, newdata = subset(test, select = -
+                                                     c(RainTomorrow)))
+    cm <- confusionMatrix(data = predictions, reference = test$RainTomorrow)
+    acc[i] <- cm$overall[1]
+    kappa[i] <- cm$overall[2]
+  }
+  list <- list("acc" = acc, "kappa" = kappa)
+  return (list)
+}
+
+```
+
+```{r}
+list <- kfold(podaci, 10)
+acc <- list$acc
+kappa <- list$kappa
+cat("10-fold validacija\n")
+cat("Najveća tačnost:", max(acc), ", fold:", which.max(acc))
+cat(", najveća kappa:", max(kappa), ", fold:", which.max(kappa), "\n")
+cat("Najmanja tačnost:", min(acc), ", fold:", which.min(acc))
+cat(", najmanja kappa:", min(kappa), ", fold:", which.min(kappa), "\n")
+cat("Srednja tačnost:", sum(acc) / length(acc))
+cat(", srednja kappa:", sum(kappa) / length(kappa), "\n\n")
+list <- kfold(podaci, 5)
+acc <- list$acc
+kappa <- list$kappa
+cat("5-fold validacija\n")
+cat("Najveća tačnost:", max(acc), ", fold:", which.max(acc))
+cat(", najveća kappa:", max(kappa), ", fold:", which.max(kappa), "\n")
+cat("Najmanja tačnost:", min(acc), ", fold:", which.min(acc))
+cat(", najmanja kappa:", min(kappa), ", fold:", which.min(kappa), "\n")
+cat("Srednja tačnost:", sum(acc) / length(acc))
+cat(", srednja kappa:", sum(kappa) / length(kappa), "\n\n")
+```
+
+
+
+#oversampling
+```{r}
+library(ROSE)
+
+oversample <- ovun.sample(RainTomorrow ~ ., data = podaci, method = "both", N = 2000)$data
+set.seed(2222)
+rows <- sample(nrow(oversample))
+oversample <- oversample[rows, ]
+end <- length(oversample$MinTemp)
+n <- as.integer(0.8 * end)
+podaci_train <- oversample[1 : n, ]
+podaci_test <- oversample[(n + 1) : end, ]
+
+```
+
+```{r}
+model <- naive_bayes(RainTomorrow~Location+MinTemp+MaxTemp+Rainfall+WindGustDir+WindGustSpeed+RainToday+Humidity9am+Cloud9am+Pressure9am+WindDir9am+WindDir3pm, data=podaci_train,laplace=1, na.action="na.omit")
+predictions <- predict(model, newdata = subset(podaci_test, select = -
+c(RainTomorrow)))
+cm <- confusionMatrix(data = predictions, reference = podaci_test$RainTomorrow)
+model
+draw_confusion_matrix(cm)
+
+```
+
+
+#undersampling
+```{r}
+library(ROSE)
+
+oversample <- ovun.sample(RainTomorrow ~ ., data = podaci, method = "under", N = 2000)$data
+set.seed(2222)
+rows <- sample(nrow(oversample))
+oversample <- oversample[rows, ]
+end <- length(oversample$MinTemp)
+n <- as.integer(0.8 * end)
+podaci_train <- oversample[1 : n, ]
+podaci_test <- oversample[(n + 1) : end, ]
+
+```
+
+```{r}
+model <- naive_bayes(RainTomorrow~Location+MinTemp+MaxTemp+Rainfall+WindGustDir+WindGustSpeed+RainToday+Humidity9am+Cloud9am+Pressure9am+WindDir9am+WindDir3pm, data=podaci_train,laplace=1, na.action="na.omit")
+predictions <- predict(model, newdata = subset(podaci_test, select = -
+c(RainTomorrow)))
+cm <- confusionMatrix(data = predictions, reference = podaci_test$RainTomorrow)
+model
+draw_confusion_matrix(cm)
+
+```
+
+
+
+
+```{r}
+bayes_bootstrap <- function(podaci, k)
+{
+ acc <- rep(NA, k)
+ kappa <- rep(NA, k)
+ B <- as.integer(length(podaci$RainTomorrow) / k)
+ 
+ for (i in 1:k)
+ {
+ test <- podaci[sample(nrow(podaci), size = B), ]
+ train <- podaci[sample(nrow(podaci), size = length(podaci$RainTomorrow) -
+B), ]
+ 
+ predictions <- naive_bayes(train = subset(train, select = -c(RainTomorrow)),
+ test = subset(test, select = -c(RainTomorrow)),
+ cl = train$RainTomorrow, k = 5)
+ cm <- confusionMatrix(data = predictions, reference = test$RainTomorrow)
+ acc[i] <- cm$overall[1]
+ kappa[i] <- cm$overall[2]
+ }
+ list <- list("acc" = acc, "kappa" = kappa)
+ return (list)
+}
+```
+
+```{r}
+bayes_bagging <- function(podaci, k)
+{
+  my_list <- bayes_bootstrap(podaci, k)
+  allPredictions <- my_list$preds
+  test <- my_list$test
+  
+  finalPredictions <- c()
+  
+  for (i in 1:length(allPredictions[[1]]))
+  {
+    yesCounter <- 0
+    noCounter <- 0
+    
+    for (j in 1:length(allPredictions))
+    {
+      
+      if(allPredictions[[j]][[i]] == "Yes")
+        yesCounter <- yesCounter + 1
+      else
+        noCounter <- noCounter + 1
+    }
+    
+    if(yesCounter > noCounter){
+      finalPredictions[i] <- "Yes"
+    }
+    else {
+      finalPredictions[i] <- "No"
+    }
+  }
+  
+  finalPredictions <- as.factor(finalPredictions)
+  
+  cm <- confusionMatrix(data = finalPredictions, reference = test$RainTomorrow)
+  
+  cat("Za k = ", k, "\n")
+  cat("Accuracy: ", cm$overall[1], "\n")
+  cat("Kappa: ", cm$overall[2])
+}
+
+```
+

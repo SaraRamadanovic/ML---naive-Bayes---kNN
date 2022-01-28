@@ -1,0 +1,157 @@
+---
+title: "KNN-zadnji-pokusaj"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+podaci <- read.csv("dataset.csv",
+                    fileEncoding = 'UTF-8',
+                    strip.white = TRUE,
+                    header = TRUE,
+                    sep = ',')
+
+podaci$Location <- factor(sort(podaci$Location))
+podaci$Location <- sapply(podaci$WindGustDir, unclass)
+
+podaci$WindGustDir <- factor(sort(podaci$WindGustDir))
+podaci$WindGustDir <- sapply(podaci$WindGustDir, unclass)
+
+podaci$WindDir9am <- factor(sort(podaci$WindDir9am))
+podaci$WindDir9am <- sapply(podaci$WindDir9am, unclass)
+
+podaci$WindDir3pm <- factor(sort(podaci$WindDir3pm))
+podaci$WindDir3pm <- sapply(podaci$WindDir3pm, unclass)
+
+#podjela seta podataka
+
+
+podaci$RainTomorrow <- factor(podaci$RainTomorrow)
+rows <- sample(nrow(podaci))
+podaci <- podaci[rows, ]
+
+end <- length(podaci$RainTomorrow)
+n <- as.integer(0.8 * end)
+podaci_train <- podaci[1 : n, ]
+podaci_test <- podaci[(n + 1) : end, ]
+
+```
+
+
+```{r}
+
+model_knn <- knn3(RainTomorrow~Location+MinTemp+MaxTemp+Rainfall+WindGustDir+WindGustSpeed+                         RainToday+Humidity9am+Cloud9am+Pressure9am+WindDir9am+WindDir3pm, data=podaci_train, na.action="na.omit")
+
+pred_knn <- predict(model_knn, newdata = podaci_test, type="class")
+
+```
+
+```{r}
+
+cm <- confusionMatrix(pred_knn, podaci_test$RainTomorrow)
+draw_confusion_matrix(cm)
+
+```
+#ROC
+
+```{r}
+
+pred_bayes_num <- as.numeric(pred_bayes)
+podaci_test_num <- as.numeric(podaci_test$RainTomorrow)
+lrROC <- roc(pred_bayes_num ~ podaci_test_num,smoothed = TRUE,
+             # arguments for ci
+             ci=TRUE, boot.n=100, ci.alpha=0.9, stratified=FALSE,
+             # arguments for plot
+             plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+             print.auc=TRUE, show.thres=TRUE)
+
+sens.ci <- ci.se(lrROC)
+plot(sens.ci, type="shape", col="lightblue")
+
+
+```
+
+
+#oversampling
+```{r}
+library(ROSE)
+
+oversample <- ovun.sample(RainTomorrow ~ ., data = podaci, method = "over", N = 2000)$data
+set.seed(2222)
+rows <- sample(nrow(oversample))
+oversample <- oversample[rows, ]
+end <- length(oversample$MinTemp)
+n <- as.integer(0.8 * end)
+podaci_train <- oversample[1 : n, ]
+podaci_test <- oversample[(n + 1) : end, ]
+
+```
+
+
+```{r}
+
+model_knn <- knn3(RainTomorrow~Location+MinTemp+MaxTemp+Rainfall+WindGustDir+WindGustSpeed+                         RainToday+Humidity9am+Cloud9am+Pressure9am+WindDir9am+WindDir3pm, data=podaci_train, na.action="na.omit")
+
+pred_knn <- predict(model_knn, newdata = podaci_test, type="class")
+
+cm <- confusionMatrix(pred_knn, podaci_test$RainTomorrow)
+draw_confusion_matrix(cm)
+```
+
+
+#k-fold
+```{r}
+library(plyr)
+
+kfold <- function(podaci, k)
+{
+  folds <- split(podaci, cut(sample(1 : nrow(podaci)), k))
+  acc <- rep(NA, length(folds))
+  kappa <- rep(NA, length(folds))
+  
+  for (i in 1:length(folds))
+  {
+    test <- subset(ldply(folds[i], data.frame), select = -c(.id))
+    train <- subset(ldply(folds[-i], data.frame), select = -c(.id))
+    
+    
+    model <- naive_bayes(formula = RainTomorrow ~ ., data = train, kernel = "linear")
+    predictions <- predict(model, newdata = subset(test, select = -
+                                                     c(RainTomorrow)))
+    cm <- confusionMatrix(data = predictions, reference = test$RainTomorrow)
+    acc[i] <- cm$overall[1]
+    kappa[i] <- cm$overall[2]
+  }
+  list <- list("acc" = acc, "kappa" = kappa)
+  return (list)
+}
+```
+
+
+```{r}
+list <- kfold(podaci, 10)
+acc <- list$acc
+kappa <- list$kappa
+cat("10-fold validacija\n")
+cat("Najveća tačnost:", max(acc), ", fold:", which.max(acc))
+cat(", najveća kappa:", max(kappa), ", fold:", which.max(kappa), "\n")
+cat("Najmanja tačnost:", min(acc), ", fold:", which.min(acc))
+cat(", najmanja kappa:", min(kappa), ", fold:", which.min(kappa), "\n")
+cat("Srednja tačnost:", sum(acc) / length(acc))
+cat(", srednja kappa:", sum(kappa) / length(kappa), "\n\n")
+list <- kfold(podaci, 5)
+acc <- list$acc
+kappa <- list$kappa
+cat("5-fold validacija\n")
+cat("Najveća tačnost:", max(acc), ", fold:", which.max(acc))
+cat(", najveća kappa:", max(kappa), ", fold:", which.max(kappa), "\n")
+cat("Najmanja tačnost:", min(acc), ", fold:", which.min(acc))
+cat(", najmanja kappa:", min(kappa), ", fold:", which.min(kappa), "\n")
+cat("Srednja tačnost:", sum(acc) / length(acc))
+cat(", srednja kappa:", sum(kappa) / length(kappa), "\n\n")
+```
+
